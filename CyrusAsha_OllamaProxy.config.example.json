@@ -7,7 +7,7 @@
   "UPSTREAM_STRATEGY": "ordered",
   "RETRY_STATUS_CODES": "401,403,404,408,409,429,500,502,503,504",
   "DEFAULT_MODEL": "auto",
-  "OLLAMA_MODELS": "copilot-free=auto",
+  "OLLAMA_MODELS": "copilot-free=auto ,FreeLlmApiAuto=auto, AutoAllGlm=auto:all-glm,",
   "ADD_LATEST_TAG": "true",
   "REQUEST_TIMEOUT_MS": "120000"
 }
