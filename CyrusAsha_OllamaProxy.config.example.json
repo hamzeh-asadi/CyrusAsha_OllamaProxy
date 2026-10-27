@@ -1,0 +1,13 @@
+{
+  "$comment": "CyrusAsha_OllamaProxy configuration — the JSON twin of .env. On every run both files are merged and the newest change of each key is written back to both, so .env and this file always end up identical. Copy this file to CyrusAsha_OllamaProxy.config.json, or simply start the proxy once and the file is generated from .env. Values are strings because they mirror .env.",
+  "PORT": "11434",
+  "HOST": "127.0.0.1",
+  "FREELLMAPI_BASE_URL": "http://127.0.0.1:3001/v1",
+  "FREELLMAPI_API_KEY": "freellmapi-REPLACE_ME",
+  "UPSTREAM_STRATEGY": "ordered",
+  "RETRY_STATUS_CODES": "401,403,404,408,409,429,500,502,503,504",
+  "DEFAULT_MODEL": "auto",
+  "OLLAMA_MODELS": "copilot-free=auto",
+  "ADD_LATEST_TAG": "true",
+  "REQUEST_TIMEOUT_MS": "120000"
+}
