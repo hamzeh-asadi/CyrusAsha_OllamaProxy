@@ -8,11 +8,17 @@
   درخواست‌ها را با API key به یک یا چند freellmapi upstream می‌فرستد.
 
   نکته مهم:
-  - رفتار قبلی حفظ شده است.
-  - اگر فقط FREELLMAPI_BASE_URL و FREELLMAPI_API_KEY بدهید، دقیقاً مثل قبل کار می‌کند.
-  - اگر چند آدرس/API key بدهید، proxy می‌تواند روی آن‌ها failover یا round-robin انجام دهد.
-  - تنظیمات از دو فایل .env و CyrusAsha_OllamaProxy.config.json خوانده می‌شود؛
-    هربار اجرا این دو با هم یکی می‌شوند و آخرین تغییر روی هر دو اعمال می‌گردد.
+  - رفتار پروکسی تغییری نکرده است؛ فقط لایه‌ی تنظیمات ساده شده است.
+  - تنها فایل تنظیمات `CyrusAsha_OllamaProxy.config.json` است؛ فایل `.env` وجود ندارد.
+  - سرورها فقط با یک کلید تعریف می‌شوند: آرایه‌ی `UPSTREAMS` که هر عضو آن
+    `{ "url": "...", "key": "..." }` است (نام اختیاری). ترتیب اعضا، ترتیب
+    failover است و proxy می‌تواند روی آن‌ها ordered یا round-robin کار کند.
+  - هر سرور می‌تواند با `"models": ["..."]` اعلام کند کدام مدل‌ها را سرو می‌کند؛
+    درخواست هر مدل اول به همان سرورها می‌رود و سرور بدون `models` همه‌ی مدل‌ها
+    را می‌پذیرد.
+  - مدل‌ها هم در همان فایل و به شکل آرایه‌ی `OLLAMA_MODELS` تعریف می‌شوند.
+  - شکل‌های قدیمی (BASE_URLs + API_KEY، UPSTREAMS_JSON و نام‌های FREELLMAPI_*)
+    هنگام شروع یک‌بار خودکار به همین آرایه تبدیل می‌شوند.
 
   جریان کلی:
 
@@ -31,25 +37,33 @@ import http from 'node:http';
 // ماژول path برای چاپ نام فایل‌های پیکربندی در لاگ.
 import path from 'node:path';
 
-// لایه پیکربندی: فایل .env و فایل JSON را می‌خواند و آن‌ها را با هم همگام می‌کند.
-import { loadConfig, PROJECT_NAME, ENV_FILE_NAME, CONFIG_JSON_FILE_NAME } from './config.js';
+// لایه پیکربندی: تنها فایل CyrusAsha_OllamaProxy.config.json را می‌خواند.
+import { loadConfig, PROJECT_NAME, CONFIG_FILE_NAME } from './config.js';
 
-// تنظیمات برنامه. این خط:
-//   1) .env و CyrusAsha_OllamaProxy.config.json را می‌خواند،
-//   2) آخرین تغییر هر کلید را روی هر دو فایل اعمال می‌کند،
-//   3) و مقادیر را با اولویت متغیرهای محیطی شل برمی‌گرداند.
-const config = loadConfig();
-
-// خلاصه همگام‌سازی پیکربندی.
-console.log(`🔧 ${PROJECT_NAME} config: ${ENV_FILE_NAME} ↔ ${CONFIG_JSON_FILE_NAME} (${config.syncEnabled ? config.source : 'sync disabled'})`);
-
-if (config.wrote.length) {
-  console.log(`💾 Config files updated: ${config.wrote.map(file => path.basename(file)).join(', ')}`);
+// تنظیمات برنامه از یک فایل JSON خوانده می‌شود؛ متغیرهای شل روی آن اولویت دارند.
+// اگر JSON معتبر نباشد، قبل از هر نوشتنی متوقف می‌شویم تا فایل خراب نشود.
+let config;
+try {
+  config = loadConfig();
+} catch (err) {
+  console.error(`❌ Config error: ${err.message}`);
+  console.error('   Nothing was written. Fix the file named above, then start the proxy again.');
+  process.exit(1);
 }
 
-for (const conflict of config.conflicts) {
-  const winnerFile = conflict.winner === 'env' ? ENV_FILE_NAME : CONFIG_JSON_FILE_NAME;
-  console.warn(`⚠️  Config conflict on ${conflict.key}: changed in both files — ${winnerFile} is newer and wins (${conflict.reason}).`);
+// خلاصه‌ی بارگذاری تنظیمات.
+console.log(`🔧 ${PROJECT_NAME} config: ${config.configFileName}${config.syncEnabled ? '' : ' (read-only: CONFIG_SYNC=off)'}`);
+
+if (config.wrote) {
+  console.log(`💾 Config file updated: ${path.basename(config.file)}`);
+}
+
+for (const note of config.migrated) {
+  console.log(`🔤 Config migration: ${note}`);
+}
+
+if (config.importedEnv) {
+  console.log(`📦 ${path.basename(config.importedEnv)} kept as a backup; it is no longer read.`);
 }
 
 // پورتی که proxy روی آن گوش می‌دهد. 11434 پورت پیش‌فرض Ollama است.
@@ -74,21 +88,22 @@ const UPSTREAM_STRATEGY = String(config.get('UPSTREAM_STRATEGY', 'ordered')).toL
 
 // status codeهایی که اگر از upstream بگیریم، ارزش retry روی upstream بعدی دارند.
 // 429 یعنی rate limit/quota؛ 5xx یعنی خطای سرور؛ 401/403 شاید key آن upstream مشکل داشته باشد.
+// می‌توان CSV نوشت (429,500) یا JSON array (["429","500"]).
 const RETRY_STATUS_CODES = config
-  .get('RETRY_STATUS_CODES', '401,403,404,408,409,429,500,502,503,504')
-  .split(',')
-  .map(s => Number(s.trim()))
+  .getList('RETRY_STATUS_CODES', ['401', '403', '404', '408', '409', '429', '500', '502', '503', '504'])
+  .map(item => Number(typeof item === 'object' ? item.value ?? '' : item))
   .filter(Number.isFinite);
 
-// مدل‌هایی که Copilot/Visual Studio می‌بیند.
+// مدل‌هایی که Copilot/Visual Studio می‌بیند؛ از JSON array خوانده می‌شود.
 // مثال:
-//   OLLAMA_MODELS=copilot-free=auto,my-fusion=fusion
-// سمت چپ چیزی است که Copilot می‌بیند؛ سمت راست چیزی است که freellmapi دریافت می‌کند.
-const OLLAMA_MODELS = config
-  .get('OLLAMA_MODELS', DEFAULT_MODEL)
-  .split(',')
-  .map(s => s.trim())
-  .filter(Boolean);
+//   OLLAMA_MODELS=[
+//     "copilot-free=auto",
+//     "my-fusion=fusion"
+//   ]
+// سمت چپ "=" چیزی است که Copilot می‌بیند؛ سمت راست چیزی است که freellmapi دریافت می‌کند.
+// اگر به جای "=" دو طرف یکی باشد (مثلاً "auto")، نام همان مدل استفاده می‌شود.
+// شکل object هم قبول است: { "name": "copilot-free", "upstream": "auto" }
+const OLLAMA_MODELS = config.getList('OLLAMA_MODELS', [DEFAULT_MODEL]);
 
 // شمارنده برای round-robin. هر درخواست یکی جلو می‌رود.
 let roundRobinCounter = 0;
@@ -101,79 +116,27 @@ function cleanBaseURL(url) {
   return String(url || '').trim().replace(/\/+$/, '');
 }
 
-// یک string CSV ساده را به array تبدیل می‌کند.
-// برای FREELLMAPI_BASE_URLS و FREELLMAPI_API_KEYS استفاده می‌شود.
-function parseCSV(value) {
-  return String(value || '')
-    .split(',')
-    .map(s => s.trim())
-    .filter(Boolean);
-}
+/*
+  سرورهای بالادست فقط از یک جا می‌آیند: آرایه‌ی `UPSTREAMS` در فایل تنظیمات.
 
-// پیکربندی چند upstream را از .env می‌خواند.
-// سه روش پشتیبانی می‌شود:
-//
-// روش 1، سازگار با نسخه قبلی:
-//   FREELLMAPI_BASE_URL=http://127.0.0.1:3001/v1
-//   FREELLMAPI_API_KEY=freellmapi-...
-//
-// روش 2، ساده برای چند مورد:
-//   FREELLMAPI_BASE_URLS=http://127.0.0.1:3001/v1,http://127.0.0.1:3002/v1
-//   FREELLMAPI_API_KEYS=key1,key2
-//
-// روش 3، JSON کامل:
-//   FREELLMAPI_UPSTREAMS_JSON=[{"name":"one","baseURL":"http://127.0.0.1:3001/v1","apiKey":"key1"}]
+    "UPSTREAMS": [
+      { "url": "http://127.0.0.1:3001/v1", "key": "freellmapi-key-1" },
+      { "name": "backup", "url": "http://127.0.0.1:3002/v1", "key": "freellmapi-key-2" }
+    ]
+
+  ترتیب اعضا همان ترتیب failover است. لایه‌ی پیکربندی، شکل‌های قدیمی
+  (BASE_URLs + API_KEY یا UPSTREAMS_JSON) را یک‌بار خودش به همین آرایه تبدیل می‌کند.
+*/
 function parseUpstreams() {
-  // مقدارهای پیکربندی از .env و فایل JSON (همگام‌شده) می‌آیند.
-  const upstreamsJSON = config.get('FREELLMAPI_UPSTREAMS_JSON');
-  const upstreamsBaseURLs = config.get('FREELLMAPI_BASE_URLS');
-  const upstreamsAPIKeys = config.get('FREELLMAPI_API_KEYS');
-
-  // اگر JSON داده شده باشد، اولویت با آن است چون کامل‌ترین روش است.
-  if (upstreamsJSON) {
-    try {
-      const parsed = JSON.parse(upstreamsJSON);
-
-      // باید array باشد.
-      if (!Array.isArray(parsed)) {
-        throw new Error('FREELLMAPI_UPSTREAMS_JSON must be an array');
-      }
-
-      // هر عضو JSON را به شکل استاندارد داخلی تبدیل می‌کنیم.
-      return parsed.map((item, index) => ({
-        name: item.name || `upstream-${index + 1}`,
-        baseURL: cleanBaseURL(item.baseURL || item.baseUrl || item.url),
-        apiKey: item.apiKey || item.api_key || item.key || '',
-      })).filter(u => u.baseURL && u.apiKey);
-    } catch (err) {
-      console.error(`❌ Invalid FREELLMAPI_UPSTREAMS_JSON: ${err.message}`);
-      process.exit(1);
-    }
-  }
-
-  // اگر BASE_URLS یا API_KEYS داده شده باشد، آن‌ها را index به index جفت می‌کنیم.
-  if (upstreamsBaseURLs || upstreamsAPIKeys) {
-    const urls = parseCSV(upstreamsBaseURLs || config.get('FREELLMAPI_BASE_URL'));
-    const keys = parseCSV(upstreamsAPIKeys || config.get('FREELLMAPI_API_KEY'));
-
-    // تعداد نهایی برابر بیشترین تعداد URL یا KEY است.
-    const count = Math.max(urls.length, keys.length);
-
-    // اگر فقط یک URL داده شده و چند key، همان URL برای همه keyها استفاده می‌شود.
-    // اگر چند URL و فقط یک key داده شده، همان key برای همه URLها استفاده می‌شود.
-    return Array.from({ length: count }, (_, index) => ({
-      name: `upstream-${index + 1}`,
-      baseURL: cleanBaseURL(urls[index] || urls[0]),
-      apiKey: keys[index] || keys[0] || '',
-    })).filter(u => u.baseURL && u.apiKey);
-  }
-
-  // حالت قدیمی و ساده: یک آدرس و یک API key.
-  return [{
-    name: 'upstream-1',
-    baseURL: cleanBaseURL(config.get('FREELLMAPI_BASE_URL', 'http://127.0.0.1:3001/v1')),
-    apiKey: config.get('FREELLMAPI_API_KEY', ''),
-  }].filter(u => u.baseURL && u.apiKey);
+  return config.upstreams
+    .map((upstream, index) => ({
+      name: upstream.name || `upstream-${index + 1}`,
+      baseURL: cleanBaseURL(upstream.url),
+      apiKey: String(upstream.key || ''),
+      // لیست خالی یعنی این سرور همه‌ی مدل‌ها را می‌پذیرد.
+      models: Array.isArray(upstream.models) ? upstream.models.map(model => String(model).trim()).filter(Boolean) : [],
+    }))
+    .filter(u => u.baseURL && u.apiKey);
 }
 
 // لیست upstreamهای آماده استفاده.
@@ -183,7 +146,7 @@ const UPSTREAMS = parseUpstreams();
 if (!UPSTREAMS.length) {
   console.error(
     '❌ No valid freellmapi upstream configured. ' +
-    `Set FREELLMAPI_BASE_URL/FREELLMAPI_API_KEY (or FREELLMAPI_BASE_URLS/FREELLMAPI_API_KEYS) in ${ENV_FILE_NAME} or ${CONFIG_JSON_FILE_NAME}.`
+    `Add at least one { "url": "...", "key": "..." } object to "UPSTREAMS" in ${CONFIG_FILE_NAME}.`
   );
   process.exit(1);
 }
@@ -196,16 +159,37 @@ function maskKey(apiKey) {
   return `****${text.slice(-4)} (len=${text.length})`;
 }
 
-// mapping مدل‌ها را از OLLAMA_MODELS می‌سازد.
-// مثال:
-//   copilot-free=auto
-// تبدیل می‌شود به:
-//   { displayBase: 'copilot-free', upstream: 'auto' }
+/*
+  mapping مدل‌ها را از OLLAMA_MODELS می‌سازد.
+
+  شکل خوانا (JSON array):
+    OLLAMA_MODELS=[
+      "copilot-free=auto",
+      "my-fusion=fusion"
+    ]
+  تبدیل می‌شود به:
+    { displayBase: 'copilot-free', upstream: 'auto' }
+
+  شکل object هم پذیرفته می‌شود:
+    OLLAMA_MODELS=[
+      { "name": "copilot-free", "upstream": "auto" }
+    ]
+*/
 function parseModelMappings() {
   return OLLAMA_MODELS.map(item => {
-    const [displayRaw, upstreamRaw] = item.split('=').map(s => s.trim());
+    // شکل object: {"name": "...", "upstream": "..."}
+    if (item && typeof item === 'object') {
+      const upstream = String(item.upstream || item.model || item.target || DEFAULT_MODEL).trim();
+      const displayBase = String(item.name || item.display || item.alias || toOllamaModelName(upstream)).trim();
+
+      return { displayBase, upstream };
+    }
+
+    // شکل رشته‌ای: "display=upstream" یا فقط "display".
+    const [displayRaw, upstreamRaw] = String(item).split('=').map(s => s.trim());
     const displayBase = displayRaw || DEFAULT_MODEL;
     const upstream = upstreamRaw || displayBase.replace(/:latest$/, '');
+
     return { displayBase, upstream };
   });
 }
@@ -365,25 +349,63 @@ function shouldRetryStatus(status) {
   return RETRY_STATUS_CODES.includes(Number(status));
 }
 
+// نام مدل را برای مقایسه یکدست می‌کند (فاصله، بزرگی حروف و :latest مهم نیست).
+function normalizeModelName(name) {
+  return String(name ?? '').trim().toLowerCase().replace(/:latest$/, '');
+}
+
+// آیا این upstream مدل درخواستی را پوشش می‌دهد؟
+// عضو بدون models یعنی «همه‌ی مدل‌ها». هر دو شکل نام مدل - نام upstream و نام
+// نمایشی (سمت چپ OLLAMA_MODELS) - پذیرفته می‌شود.
+function upstreamServesModel(upstream, model) {
+  if (!upstream.models.length) return true;
+
+  const wanted = new Set([normalizeModelName(model)]);
+
+  for (const mapping of MODEL_MAPPINGS) {
+    if (normalizeModelName(mapping.upstream) === normalizeModelName(model)) {
+      wanted.add(normalizeModelName(mapping.displayBase));
+    }
+  }
+
+  return upstream.models.some(entry => wanted.has(normalizeModelName(entry)));
+}
+
+// سرورهایی که مدل درخواستی را پوشش می‌دهند. اگر هیچ سروری مدلی اعلام نکرده باشد
+// یا مدل ناشناخته باشد، همه‌ی سرورها برمی‌گردند تا رفتار قبلی حفظ شود.
+function upstreamsForModel(model) {
+  if (!model) return UPSTREAMS;
+  if (!UPSTREAMS.some(upstream => upstream.models.length)) return UPSTREAMS;
+
+  const matching = UPSTREAMS.filter(upstream => upstreamServesModel(upstream, model));
+
+  if (matching.length) return matching;
+
+  console.warn(`${now()} no upstream declares model=${model}; trying every upstream.`);
+  return UPSTREAMS;
+}
+
 // ترتیب upstreamها برای هر درخواست را می‌سازد.
-function getUpstreamOrder() {
+function getUpstreamOrder(model) {
+  const pool = upstreamsForModel(model);
+
   // اگر فقط یک upstream داریم، همان را برمی‌گردانیم.
-  if (UPSTREAMS.length <= 1) return UPSTREAMS;
+  if (pool.length <= 1) return pool;
 
   // حالت round-robin: هر request از upstream بعدی شروع می‌شود.
   if (UPSTREAM_STRATEGY === 'round-robin') {
-    const start = roundRobinCounter++ % UPSTREAMS.length;
-    return [...UPSTREAMS.slice(start), ...UPSTREAMS.slice(0, start)];
+    const start = roundRobinCounter++ % pool.length;
+    return [...pool.slice(start), ...pool.slice(0, start)];
   }
 
   // حالت پیش‌فرض: همیشه از اولی شروع کن.
-  return UPSTREAMS;
+  return pool;
 }
 
 // یک درخواست را به upstreamها می‌فرستد.
 // اگر upstream اول خطای قابل retry بدهد، روی upstream بعدی امتحان می‌کند.
-async function requestUpstream(pathName, init = {}, { signal } = {}) {
-  const order = getUpstreamOrder();
+async function requestUpstream(pathName, init = {}, { signal, model } = {}) {
+  const order = getUpstreamOrder(model);
   let lastError = null;
 
   for (let i = 0; i < order.length; i++) {
@@ -442,7 +464,7 @@ async function callOpenAIChatCompletions(payload, { signal } = {}) {
   const { response } = await requestUpstream('/chat/completions', {
     method: 'POST',
     body: JSON.stringify(payload),
-  }, { signal });
+  }, { signal, model: payload.model });
 
   if (!response.ok) {
     const text = await response.text().catch(() => '');
@@ -492,7 +514,7 @@ async function handleOpenAIChatCompletions(req, res) {
     const { response: upstream } = await requestUpstream('/chat/completions', {
       method: 'POST',
       body: JSON.stringify(mapped),
-    }, { signal: controller.signal });
+    }, { signal: controller.signal, model: mapped.model });
 
     if (!upstream.ok) {
       const text = await upstream.text().catch(() => '');
@@ -547,7 +569,7 @@ async function handleOpenAIResponses(req, res) {
     const { response: upstream } = await requestUpstream('/responses', {
       method: 'POST',
       body: JSON.stringify(mapped),
-    }, { signal: controller.signal });
+    }, { signal: controller.signal, model: mapped.model });
 
     if (!upstream.ok) {
       const text = await upstream.text().catch(() => '');
@@ -942,7 +964,9 @@ server.listen(PORT, HOST, () => {
   console.log(`📋 Exposed models: ${modelList().map(m => m.name).join(', ')}`);
   console.log(`🧭 Model mappings: ${MODEL_MAPPINGS.map(m => `${toOllamaModelName(m.displayBase)} -> ${m.upstream}`).join(', ')}`);
   console.log(`🔁 Upstream strategy: ${UPSTREAM_STRATEGY}`);
-  console.log(`🌐 Upstreams: ${UPSTREAMS.map(u => `${u.name}=${u.baseURL} key=${maskKey(u.apiKey)}`).join(' | ')}`);
+  console.log(
+    `🌐 Upstreams: ${UPSTREAMS.map(u => `${u.name}=${u.baseURL} key=${maskKey(u.apiKey)} models=${u.models.length ? u.models.join(',') : '*'}`).join(' | ')}`
+  );
 });
 
 // خاموش کردن تمیز با Ctrl+C یا signalهای سیستم.

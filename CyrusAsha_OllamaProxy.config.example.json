@@ -1,13 +1,41 @@
 {
-  "$comment": "CyrusAsha_OllamaProxy configuration — the JSON twin of .env. On every run both files are merged and the newest change of each key is written back to both, so .env and this file always end up identical. Copy this file to CyrusAsha_OllamaProxy.config.json, or simply start the proxy once and the file is generated from .env. Values are strings because they mirror .env.",
-  "PORT": "11434",
+  "$comment": "CyrusAsha_OllamaProxy settings — the only config file. One object per upstream: { \"url\": \"http://host:port/v1\", \"key\": \"your-key\" }; optional \"models\": [\"...\"] limits a server to those models, optional \"name\" labels it in logs. List order is the failover order. Restart the proxy after editing.",
+  "PORT": 11434,
   "HOST": "127.0.0.1",
-  "FREELLMAPI_BASE_URL": "http://127.0.0.1:3001/v1",
-  "FREELLMAPI_API_KEY": "freellmapi-REPLACE_ME",
-  "UPSTREAM_STRATEGY": "ordered",
-  "RETRY_STATUS_CODES": "401,403,404,408,409,429,500,502,503,504",
+  "UPSTREAMS": [
+    {
+      "name": "primary",
+      "url": "http://127.0.0.1:3001/v1",
+      "key": "freellmapi-key-1",
+      "models": [
+        "auto",
+        "auto:all-glm"
+      ]
+    },
+    {
+      "url": "http://127.0.0.1:3002/v1",
+      "key": "freellmapi-key-2",
+      "models": [
+        "auto:all-gpt"
+      ]
+    },
+    {
+      "name": "catch-all",
+      "url": "http://127.0.0.1:3003/v1",
+      "key": "freellmapi-key-3"
+    }
+  ],
   "DEFAULT_MODEL": "auto",
-  "OLLAMA_MODELS": "copilot-free=auto ,FreeLlmApiAuto=auto, AutoAllGlm=auto:all-glm,",
-  "ADD_LATEST_TAG": "true",
-  "REQUEST_TIMEOUT_MS": "120000"
+  "OLLAMA_MODELS": [
+    "FreeLlmApiAuto=auto",
+    "AutoAllGlm=auto:all-glm",
+    "AutoAllGpt=auto:all-gpt",
+    "AutoAllKimi=auto:all-kimi",
+    "AutoAllNemotron=auto:all-nemotron",
+    "AutoAllMinimax=auto:all-minimax",
+    "all-deepseek=auto:all-deepseek",
+    "all-qwen=auto:all-qwen",
+    "all-gemini=auto:all-gemini",
+    "agnes-2.5-pro=agnes-2.5-pro"
+  ]
 }

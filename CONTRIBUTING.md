@@ -25,7 +25,7 @@ Please be respectful and constructive in all discussions, issues, and pull reque
    ```
 2. Ensure code adheres to pure modern Node.js standards (ES modules, `node:` prefixes, minimal external dependencies).
 3. Test your changes locally against both Ollama and OpenAI routes.
-4. Verify that `.env` and `CyrusAsha_OllamaProxy.config.json` sync properly without errors.
+4. Verify that `CyrusAsha_OllamaProxy.config.json` loads without errors (`npm start`), including the one-time migration of legacy keys.
 5. Commit your changes with clear, descriptive commit messages.
 6. Push to your fork and submit a Pull Request.
 

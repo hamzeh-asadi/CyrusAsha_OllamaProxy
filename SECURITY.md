@@ -19,7 +19,7 @@ We take the security of `CyrusAsha_OllamaProxy` seriously. If you discover a sec
 ## Key Security Architecture Principles
 
 - **Loopback Default:** By default, the proxy binds strictly to `127.0.0.1` (loopback). It must NOT be exposed directly to the public internet without an authentication layer and reverse proxy (such as Nginx/Caddy with TLS).
-- **Secrets Management:** Upstream API keys are stored only in local configuration files (`.env` / `CyrusAsha_OllamaProxy.config.json`), which are excluded from version control via `.gitignore`.
+- **Secrets Management:** Upstream API keys are stored only in the local configuration file `CyrusAsha_OllamaProxy.config.json` (plus the `.env.imported` backup created by the legacy migration), which are excluded from version control via `.gitignore`.
 - **Log Masking:** The proxy never logs full API keys. Only the last 4 characters and the key length are displayed (`****abcd (len=36)`).
 - **Bearer Token Isolation:** API keys are injected exclusively in outbound requests to configured upstreams in the standard `Authorization: Bearer <key>` header.
 - **Failover Safety:** Failover happens transparently across trusted upstreams specified by the operator.

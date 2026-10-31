@@ -5,11 +5,9 @@ node_modules/
 
 # Local configuration and sensitive files - NEVER commit secrets
 .env
-.env.local
-.env.*.local
+.env.*
 *.env
 CyrusAsha_OllamaProxy.config.json
-.config-sync.json
 
 # Freebuff and local AI agent runtime artifacts
 .freebuff/

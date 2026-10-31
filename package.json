@@ -1,7 +1,7 @@
 {
   "name": "cyrusasha-ollama-proxy",
-  "version": "1.1.0",
-  "description": "CyrusAsha_OllamaProxy - local Ollama- and OpenAI-compatible proxy that forwards Visual Studio / GitHub Copilot traffic to one or many freellmapi upstreams, with automatic failover and .env <-> JSON config sync.",
+  "version": "2.0.0",
+  "description": "CyrusAsha_OllamaProxy - local Ollama- and OpenAI-compatible proxy that forwards Visual Studio / GitHub Copilot traffic to one or many freellmapi upstreams, with automatic failover and a single readable JSON config file.",
   "type": "module",
   "main": "src/CyrusAsha_OllamaProxy.js",
   "scripts": {
@@ -15,7 +15,7 @@
     "github-copilot",
     "visual-studio",
     "failover",
-    "config-sync"
+    "json-config"
   ],
   "author": "CyrusAsha",
   "license": "MIT",

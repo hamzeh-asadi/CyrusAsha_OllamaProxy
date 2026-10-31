@@ -3,10 +3,9 @@
 Pre-release and pre-merge verification checklist for `CyrusAsha_OllamaProxy`.
 
 ## 1. Secrets & Credentials Management
-- [x] `.env` and `CyrusAsha_OllamaProxy.config.json` are listed in `.gitignore`.
-- [x] `.config-sync.json` internal state file is listed in `.gitignore`.
+- [x] `CyrusAsha_OllamaProxy.config.json` and the `.env.imported` backup are listed in `.gitignore`.
 - [x] `.freebuff/` and agent caches are listed in `.gitignore`.
-- [x] No plaintext API keys or credentials exist in git tracking or sample files (`.env.example`, `*.example.json`).
+- [x] No plaintext API keys or credentials exist in git tracking or sample files (`*.example.json`).
 - [x] Console logs mask API keys with `maskKey()` showing only last 4 characters and length.
 
 ## 2. Network & Ingress Security
@@ -25,8 +24,9 @@ Pre-release and pre-merge verification checklist for `CyrusAsha_OllamaProxy`.
 - [x] Ollama options (`temperature`, `top_p`, `num_predict`, `stop`) mapped safely to OpenAI equivalents.
 - [x] Model names aliased gracefully via `MODEL_MAPPINGS` to shield clients from raw model identifiers.
 
-## 5. Configuration Synchronization Integrity
-- [x] Safe two-way sync between `.env` and `CyrusAsha_OllamaProxy.config.json`.
-- [x] Conflict resolution favors the newest file with explicit console warning.
-- [x] Shell environment variables take absolute precedence over file settings.
+## 5. Configuration Integrity
+- [x] A single settings file (`CyrusAsha_OllamaProxy.config.json`); no second file can drift.
+- [x] Legacy keys (`UPSTREAMS_JSON`, `BASE_URLs` + `API_KEY`, `FREELLMAPI_*`) are migrated once into `UPSTREAMS`.
+- [x] Invalid JSON stops startup before any write; the file is never modified.
+- [x] Shell environment variables take absolute precedence over file settings and are never written to disk.
 - [x] Optional dry/no-write mode available via `CONFIG_SYNC=off`.
